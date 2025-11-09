@@ -30,42 +30,69 @@ export default function SignInForm() {
 
       if (error) throw error
 
-      console.log('Login successful:', data.user)
-      console.log('User metadata:', data.user.user_metadata)
+      console.log('✅ Login successful:', data.user)
+      console.log('📋 User metadata:', data.user.user_metadata)
 
       // First try to get user type from metadata
       let userType = data.user.user_metadata?.user_type
 
-      // If metadata doesn't have user_type, fetch from profiles table
+      // If metadata doesn't have user_type, fetch from profiles table with timeout
       if (!userType) {
-        console.log('User type not in metadata, fetching from profile...')
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('user_type')
-          .eq('id', data.user.id)
-          .single()
+        console.log('🔍 User type not in metadata, fetching from profile...')
 
-        if (profileError) {
-          console.error('Error fetching profile:', profileError)
-          throw new Error('Could not determine user type. Please contact support.')
+        // Add timeout to profile fetch (5 seconds max)
+        const fetchWithTimeout = Promise.race([
+          supabase
+            .from('profiles')
+            .select('user_type')
+            .eq('id', data.user.id)
+            .single(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+          )
+        ])
+
+        try {
+          const { data: profileData, error: profileError } = await fetchWithTimeout
+
+          if (profileError) {
+            console.error('❌ Error fetching profile:', profileError)
+            // Don't throw, try to continue with fallback
+          } else {
+            userType = profileData?.user_type
+            console.log('✅ User type from profile:', userType)
+          }
+        } catch (timeoutError) {
+          console.error('⏱️ Profile fetch timed out:', timeoutError)
+          // Continue without user type, will redirect to home
         }
-
-        userType = profileData?.user_type
-        console.log('User type from profile:', userType)
       }
+
+      // Refresh router to update session
+      router.refresh()
+
+      // Small delay to ensure session is set
+      await new Promise(resolve => setTimeout(resolve, 500))
 
       // Redirect based on role
-      console.log('Redirecting to:', userType === 'builder' ? '/builder/dashboard' : '/contractor/dashboard')
+      const redirectPath = userType === 'builder'
+        ? '/builder/dashboard'
+        : userType === 'contractor'
+        ? '/contractor/dashboard'
+        : '/'
 
-      if (userType === 'builder') {
-        window.location.href = '/builder/dashboard'
-      } else if (userType === 'contractor') {
-        window.location.href = '/contractor/dashboard'
-      } else {
-        window.location.href = '/'
-      }
+      console.log('🚀 Redirecting to:', redirectPath)
+
+      // Use router.push for better Next.js integration
+      router.push(redirectPath)
+
+      // Fallback to window.location after 2 seconds if router.push doesn't work
+      setTimeout(() => {
+        window.location.href = redirectPath
+      }, 2000)
+
     } catch (error) {
-      console.error('Login error:', error)
+      console.error('❌ Login error:', error)
       setError(error.message || 'An error occurred during sign in')
       setLoading(false)
     }
