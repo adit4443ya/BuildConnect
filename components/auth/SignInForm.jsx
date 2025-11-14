@@ -33,36 +33,65 @@ export default function SignInForm() {
       console.log('Login successful:', data.user)
       console.log('User metadata:', data.user.user_metadata)
 
-      // First try to get user type from metadata
-      let userType = data.user.user_metadata?.user_type
+      // Get user type from metadata
+      const userType = data.user.user_metadata?.user_type
 
-      // If metadata doesn't have user_type, fetch from profiles table
       if (!userType) {
+        // If no user type in metadata, try to fetch from profiles with timeout
         console.log('User type not in metadata, fetching from profile...')
-        const { data: profileData, error: profileError } = await supabase
+
+        // Create a promise that times out after 5 seconds
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+        )
+
+        const profilePromise = supabase
           .from('profiles')
           .select('user_type')
           .eq('id', data.user.id)
           .single()
 
-        if (profileError) {
-          console.error('Error fetching profile:', profileError)
-          throw new Error('Could not determine user type. Please contact support.')
-        }
+        try {
+          const { data: profileData, error: profileError } = await Promise.race([
+            profilePromise,
+            timeoutPromise
+          ])
 
-        userType = profileData?.user_type
-        console.log('User type from profile:', userType)
+          if (profileError) {
+            console.error('Error fetching profile:', profileError)
+            // Default to builder if profile fetch fails
+            console.log('Defaulting to builder dashboard')
+            router.push('/builder/dashboard')
+            return
+          }
+
+          const profileUserType = profileData?.user_type
+          console.log('User type from profile:', profileUserType)
+
+          // Redirect based on profile user type
+          if (profileUserType === 'contractor') {
+            router.push('/contractor/dashboard')
+          } else {
+            router.push('/builder/dashboard')
+          }
+          return
+        } catch (fetchError) {
+          console.error('Profile fetch failed:', fetchError)
+          // Default to builder dashboard if fetch fails
+          router.push('/builder/dashboard')
+          return
+        }
       }
 
-      // Redirect based on role
+      // Redirect based on metadata user type
       console.log('Redirecting to:', userType === 'builder' ? '/builder/dashboard' : '/contractor/dashboard')
 
       if (userType === 'builder') {
-        window.location.href = '/builder/dashboard'
+        router.push('/builder/dashboard')
       } else if (userType === 'contractor') {
-        window.location.href = '/contractor/dashboard'
+        router.push('/contractor/dashboard')
       } else {
-        window.location.href = '/'
+        router.push('/builder/dashboard')
       }
     } catch (error) {
       console.error('Login error:', error)
